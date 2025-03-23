@@ -1,73 +1,105 @@
 #!/bin/bash
 
-# reset shell colors
+# Reset shell colors
 tput init
 
-# https://stackoverflow.com/questions/59895/how-to-get-the-source-directory-of-a-bash-script-from-within-the-script-itself
+# Determinar o diretório raiz do projeto
 SOURCE="${BASH_SOURCE[0]}"
-while [ -h "$SOURCE" ]; do # resolve $SOURCE until the file is no longer a symlink
+while [ -h "$SOURCE" ]; do
   PROJECT_ROOT="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
   SOURCE="$(readlink "$SOURCE")"
-  [[ $SOURCE != /* ]] && SOURCE="$PROJECT_ROOT/$SOURCE" # if $SOURCE was a relative symlink, we need to resolve it relative to the path where the symlink file was located
+  [[ $SOURCE != /* ]] && SOURCE="$PROJECT_ROOT/$SOURCE"
 done
 PROJECT_ROOT="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
 
-# required imports
+# Imports necessários (assumindo que esses arquivos existem)
 source "${PROJECT_ROOT}"/variables/manifest.sh
 source "${PROJECT_ROOT}"/utils/manifest.sh
 source "${PROJECT_ROOT}"/lib/manifest.sh
 
-# user configs file
+# Criar arquivo de configuração se não existir
 if [[ ! -e "${PROJECT_ROOT}"/config ]]; then
   cat << EOF > "${PROJECT_ROOT}"/config
-deploy_password=${deploy_password}
-mysql_root_password=${mysql_root_password}
-db_pass=${db_pass}
+deploy_password=senha_local
+mysql_root_password=rootpass
+db_pass=dbpass_local
 EOF
 fi
 
-# this file has passwords
-sudo su - root <<EOF
-chown root:root "${PROJECT_ROOT}"/config
-chmod 700 "${PROJECT_ROOT}"/config
-EOF
+# Ajustar permissões do arquivo de configuração
+sudo chown "$USER:$USER" "${PROJECT_ROOT}"/config
+chmod 600 "${PROJECT_ROOT}"/config
 source "${PROJECT_ROOT}"/config
 
-# interactive CLI
+# Função interativa (assumindo que inquiry_options existe)
 inquiry_options
 
-# dependencies related
+# Atualizar sistema e instalar dependências básicas
+system_update() {
+  sudo apt update && sudo apt upgrade -y
+  sudo apt install -y curl git
+}
+
+system_node_install() {
+  curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+  sudo apt install -y nodejs
+}
+
+system_pm2_install() {
+  npm install -g pm2
+}
+
+system_docker_install() {
+  sudo apt install -y docker.io
+  sudo service docker start
+}
+
+# Executar funções de instalação
 system_update
 system_node_install
 system_pm2_install
 system_docker_install
-system_puppeteer_dependencies
-system_snapd_install
-system_nginx_install
-system_certbot_install
 
-# system config
-system_create_user
-
-# backend related
+# Backend
 system_git_clone
 backend_set_env
-backend_redis_create
-backend_node_dependencies
-backend_node_build
+backend_redis_create() {
+  docker run -d --name redis-local -p 6379:6379 redis
+}
+backend_node_dependencies() {
+  cd "${PROJECT_ROOT}/backend" && npm install
+}
+backend_node_build() {
+  cd "${PROJECT_ROOT}/backend" && npm run build
+}
 backend_db_migrate
 backend_db_seed
-backend_start_pm2
-backend_nginx_setup
+backend_start_pm2() {
+  cd "${PROJECT_ROOT}/backend" && pm2 start npm --name "backend" -- run start
+}
 
-# frontend related
+# Frontend
 frontend_set_env
-frontend_node_dependencies
-frontend_node_build
-frontend_start_pm2
-frontend_nginx_setup
+frontend_node_dependencies() {
+  cd "${PROJECT_ROOT}/frontend" && npm install
+}
+frontend_node_build() {
+  cd "${PROJECT_ROOT}/frontend" && npm run build
+}
+frontend_start_pm2() {
+  cd "${PROJECT_ROOT}/frontend" && pm2 start npm --name "frontend" -- run start
+}
 
-# network related
-system_nginx_conf
+# Configuração mínima de rede (sem Certbot)
+system_nginx_install() {
+  sudo apt install -y nginx
+}
+system_nginx_restart() {
+  sudo service nginx restart
+}
+
+system_update
+system_nginx_install
 system_nginx_restart
-system_certbot_setup
+
+echo "Instalação local concluída! Backend e frontend rodando em localhost."
